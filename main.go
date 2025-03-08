@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"strings"
 	"sync/atomic"
 )
 
@@ -12,19 +13,35 @@ type apiConfig struct {
 	fileserverHits atomic.Int32
 }
 
+var profaneWords = []string{
+	"kerfuffle",
+	"sharbert",
+	"fornax",
+}
+
+// filterProfanity replaces profane words with **** while preserving case
+func filterProfanity(text string) string {
+	words := strings.Split(text, " ")
+	for i, word := range words {
+		wordLower := strings.ToLower(word)
+		for _, profane := range profaneWords {
+			if wordLower == strings.ToLower(profane) {
+				words[i] = "****"
+				break
+			}
+		}
+	}
+	return strings.Join(words, " ")
+}
+
 func (cfg *apiConfig) middlewareMetricsInc(next http.Handler) http.Handler {
-
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-
 		cfg.fileserverHits.Add(1)
-
 		next.ServeHTTP(w, r)
 	})
 }
 
 func (cfg *apiConfig) metricsHandler(w http.ResponseWriter, r *http.Request) {
-	// Get the current count and format it as "Hits: x"
-	// Write the formatted string to the response
 	currentCount := cfg.fileserverHits.Load()
 	currentCountString := fmt.Sprintf("<html><body><h1>Welcome, Chirpy Admin</h1><p>Chirpy has been visited %d times!</p></body></html>", currentCount)
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -33,8 +50,6 @@ func (cfg *apiConfig) metricsHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func (cfg *apiConfig) resetHandler(w http.ResponseWriter, r *http.Request) {
-	// Reset the counter to 0
-	// Optionally send a confirmation message
 	cfg.fileserverHits.Store(0)
 }
 
@@ -44,56 +59,70 @@ func healthHandler(w http.ResponseWriter, r *http.Request) {
 	w.Write([]byte("OK"))
 }
 
+func respondWithError(w http.ResponseWriter, code int, msg string) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(code)
+
+	resp := struct {
+		Error string `json:"error"`
+	}{
+		Error: msg,
+	}
+
+	jsonResp, err := json.Marshal(resp)
+	if err != nil {
+		log.Printf("Error marshalling error response: %s", err)
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+
+	w.Write(jsonResp)
+}
+
+func respondWithJSON(w http.ResponseWriter, code int, payload interface{}) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(code)
+
+	jsonResp, err := json.Marshal(payload)
+	if err != nil {
+		log.Printf("Error marshalling JSON response: %s", err)
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+
+	w.Write(jsonResp)
+}
+
 func (cfg *apiConfig) validate_chirp(w http.ResponseWriter, r *http.Request) {
 	type parameters struct {
 		Body string `json:"body"`
 	}
+
 	decoder := json.NewDecoder(r.Body)
 	params := parameters{}
 	err := decoder.Decode(&params)
 	if err != nil {
 		log.Printf("Error decoding parameters: %s", err)
-		w.WriteHeader(500)
+		respondWithError(w, http.StatusInternalServerError, "Error decoding request body")
 		return
 	}
 
 	if len(params.Body) > 140 {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(400)
-
-		type errorResponse struct {
-			Error string `json:"error"`
-		}
-		resp := errorResponse{
-			Error: "Chirp is too long",
-		}
-		jsonResp, err := json.Marshal(resp)
-		if err != nil {
-			log.Printf("Error marshalling JSON: %s", err)
-			w.WriteHeader(500)
-			return
-		}
-
-		w.Write(jsonResp)
+		respondWithError(w, http.StatusBadRequest, "Chirp is too long")
 		return
-	} else {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(200)
-
-		type successResponse struct {
-			Valid bool `json:"valid"`
-		}
-		resp := successResponse{
-			Valid: true,
-		}
-		jsonResp, err := json.Marshal(resp)
-		if err != nil {
-			log.Printf("Error marshalling JSON: %s", err)
-			w.WriteHeader(500)
-			return
-		}
-		w.Write(jsonResp)
 	}
+
+	// Filter profanity
+	cleaned := filterProfanity(params.Body)
+
+	// Return the cleaned body
+	resp := struct {
+		CleanedBody string `json:"cleaned_body"`
+	}{
+		CleanedBody: cleaned,
+	}
+
+	respondWithJSON(w, http.StatusOK, resp)
 }
 
 func main() {
