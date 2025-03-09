@@ -1,0 +1,22 @@
+.env
+/out
+go.sum
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS generated files
+.DS_Store
+Thumbs.db
+
+# Local development files
+*.log
+tmp/
+
+# Compiled Go files
+*.exe
+*.test
+*.out

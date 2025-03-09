@@ -1,16 +1,22 @@
 package main
 
 import (
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
+	"os"
 	"strings"
 	"sync/atomic"
+	"github.com/joho/godotenv"
+	_ "github.com/lib/pq"
+	"goServer/internal/database"
 )
 
 type apiConfig struct {
-	fileserverHits atomic.Int32
+    fileserverHits atomic.Int32
+    DB *database.Queries
 }
 
 var profaneWords = []string{
@@ -126,9 +132,31 @@ func (cfg *apiConfig) validate_chirp(w http.ResponseWriter, r *http.Request) {
 }
 
 func main() {
+	err := godotenv.Load()
+	if err != nil {
+		log.Printf("Error loading .env file: %s", err)
+	}
+
+    dbURL := os.Getenv("DB_URL")
+    db, err := sql.Open("postgres", dbURL)
+    if err != nil {
+        log.Fatal(err)
+    }
+
+    defer db.Close()
+
+	err = db.Ping()
+    if err != nil {
+        log.Fatal(err)
+    }
+
+    dbQueries := database.New(db)
+
 	const port = "8080"
 	ServeMux := http.NewServeMux()
-	apiCfg := apiConfig{}
+	apiCfg := apiConfig{
+		DB: dbQueries,
+	}
 	server := &http.Server{
 		Addr:    ":" + port,
 		Handler: ServeMux,
